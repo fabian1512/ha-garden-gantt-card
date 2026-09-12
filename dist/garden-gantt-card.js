@@ -8,7 +8,7 @@
  * https://github.com/fabian1512/ha-garden-gantt-card
  */
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 
 const MONTHS_DE = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
 const MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -306,7 +306,7 @@ class GardenGanttCard extends HTMLElement {
             .map((on) => `<td class="${on ? "on" : ""}"></td>`)
             .join("");
           const tip = r.description ? ` title="${esc(r.description)}"` : "";
-          tableRows += `<tr><td class="label"${tip}>${esc(r.label)}</td>${cells}</tr>`;
+          tableRows += `<tr style="--gg-bar:${esc(r.color)}"><td class="label"${tip}>${esc(r.label)}</td>${cells}</tr>`;
         }
       }
 

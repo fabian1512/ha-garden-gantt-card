@@ -176,6 +176,25 @@ const START = "2026-09-01";
   check("out-of-window event has no active cells", rows[0].active.every((x) => x === false), JSON.stringify(rows[0].active));
 }
 
+// 7) Group color is applied to the rendered bar cells
+{
+  const card = makeCard();
+  card.setConfig({
+    entity: "calendar.gartenplan",
+    start: START,
+    months: 12,
+    groups: { Erdbeere: "Obst" },
+    group_colors: { Obst: "#e91e63" },
+  });
+  card._events = [
+    { summary: "Erdbeere: Ernte", start: { date: "2027-05-01" }, end: { date: "2027-08-01" } },
+  ];
+  card._render();
+  const html = card.shadowRoot.innerHTML;
+  check("rendered HTML applies group color", html.includes("--gg-bar:#e91e63"), "no --gg-bar:#e91e63 in HTML");
+  check("rendered HTML escapes nothing broken", html.includes("Erdbeere: Ernte"));
+}
+
 console.log(
   failures === 0
     ? "\nAll tests passed."
