@@ -192,6 +192,7 @@ const START = "2026-09-01";
   card._render();
   const html = card.shadowRoot.innerHTML;
   check("rendered HTML applies group color", html.includes("--gg-bar:#e91e63"), "no --gg-bar:#e91e63 in HTML");
+  check("bars use inner div (Safari-safe)", html.includes('<div class="bar"></div>'), "no .bar div found");
   check("rendered HTML escapes nothing broken", html.includes("Erdbeere: Ernte"));
 }
 

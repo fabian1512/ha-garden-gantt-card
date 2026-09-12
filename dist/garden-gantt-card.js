@@ -8,7 +8,7 @@
  * https://github.com/fabian1512/ha-garden-gantt-card
  */
 
-const VERSION = "0.1.3";
+const VERSION = "0.1.4";
 
 const MONTHS_DE = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
 const MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -307,7 +307,7 @@ class GardenGanttCard extends HTMLElement {
         }
         for (const r of gRows) {
           const cells = r.active
-            .map((on) => `<td class="${on ? "on" : ""}"></td>`)
+            .map((on) => `<td class="${on ? "on" : ""}">${on ? '<div class="bar"></div>' : ""}</td>`)
             .join("");
           const tip = r.description ? ` title="${esc(r.description)}"` : "";
           tableRows += `<tr style="--gg-bar:${esc(r.color)}"><td class="label"${tip}>${esc(r.label)}</td>${cells}</tr>`;
@@ -353,8 +353,9 @@ class GardenGanttCard extends HTMLElement {
         td.label { text-align: left; padding: 3px 8px 3px 2px; color: var(--primary-text-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         th.label { width: 26%; }
         td, thead th:not(.label) { width: ${Math.max(2.5, 74 / months)}%; }
-        tbody td:not(.label) { height: 18px; padding: 2px 0; }
-        tbody td.on:not(.label) { background: var(--gg-bar, #4caf50); background-clip: content-box; border-radius: 3px; border-bottom-color: transparent; }
+        tbody td:not(.label) { padding: 2px 0; }
+        tbody td.on:not(.label) { border-bottom-color: transparent; }
+        .bar { height: 14px; border-radius: 3px; background: var(--gg-bar, #4caf50); }
         tr.grouprow td { padding-top: 10px; padding-bottom: 3px; font-size: 12px; font-weight: 600; color: var(--primary-text-color); border-bottom: 1px solid var(--divider-color); }
         tr.grouprow .count { color: var(--secondary-text-color); font-weight: 400; margin-left: 4px; }
         tbody tr:not(.grouprow) td { border-bottom: 1px solid var(--divider-color, rgba(0,0,0,.08)); }
