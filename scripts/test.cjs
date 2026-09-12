@@ -196,6 +196,28 @@ const START = "2026-09-01";
   check("rendered HTML escapes nothing broken", html.includes("Erdbeere: Ernte"));
 }
 
+// 8) group_keywords: match by substring, works for titles without a colon
+{
+  const card = makeCard();
+  card.setConfig({
+    entity: "calendar.gartenplan",
+    start: START,
+    months: 12,
+    group_keywords: { Rasen: ["Rasen"], Gemüse: ["Tomate", "Kartoffel"], Obst: ["Apfel", "Obstbäume"] },
+  });
+  card._events = [
+    { summary: "Rasen kalken", start: { date: "2027-03-01" }, end: { date: "2027-04-01" } },
+    { summary: "Tomaten: letzte Ernte", start: { date: "2027-10-01" }, end: { date: "2027-11-01" } },
+    { summary: "Obstbäume: Stamm schützen", start: { date: "2027-11-01" }, end: { date: "2027-12-01" } },
+    { summary: "Unbekannt ohne Schlüsselwort", start: { date: "2027-03-01" }, end: { date: "2027-04-01" } },
+  ];
+  const g = card._buildRows().rows.map((r) => r.group);
+  check("keyword group 'Rasen' matched", g[0] === "Rasen", JSON.stringify(g));
+  check("keyword group 'Gemüse' matched (Tomaten)", g.includes("Gemüse"), JSON.stringify(g));
+  check("keyword group 'Obst' matched (Obstbäume)", g.includes("Obst"), JSON.stringify(g));
+  check("unmatched falls back to Aufgaben", g.includes("Aufgaben"), JSON.stringify(g));
+}
+
 console.log(
   failures === 0
     ? "\nAll tests passed."

@@ -8,7 +8,7 @@
  * https://github.com/fabian1512/ha-garden-gantt-card
  */
 
-const VERSION = "0.1.4";
+const VERSION = "0.1.5";
 
 const MONTHS_DE = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
 const MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -185,6 +185,7 @@ class GardenGanttCard extends HTMLElement {
     const lang = this._language();
     const groups = this.config.groups || {};
     const groupColors = this.config.group_colors || {};
+    const groupKeywords = this.config.group_keywords || {};
 
     const monthInfos = [];
     for (let i = 0; i < months; i++) {
@@ -211,6 +212,15 @@ class GardenGanttCard extends HTMLElement {
         const summary = ev.summary || "(ohne Titel)";
         const plant = summary.includes(":") ? summary.split(":")[0].trim() : summary.trim();
         let group = groups[plant];
+        if (!group) {
+          const hay = summary.toLowerCase();
+          for (const [g, keys] of Object.entries(groupKeywords)) {
+            if ((keys || []).some((k) => hay.includes(String(k).toLowerCase()))) {
+              group = g;
+              break;
+            }
+          }
+        }
         if (!group && ev.location) group = String(ev.location);
         if (!group) group = "Aufgaben";
         return {
