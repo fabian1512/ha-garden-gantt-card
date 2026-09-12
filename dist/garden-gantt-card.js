@@ -13,7 +13,7 @@
  * https://github.com/fabian1512/ha-garden-gantt-card
  */
 
-const VERSION = "0.2.1";
+const VERSION = "0.2.2";
 
 const MONTHS_DE = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
 const MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -379,8 +379,8 @@ class GardenGanttCard extends HTMLElement {
 
     this.shadowRoot.innerHTML = `
       <style>
-        :host { display: block; }
-        ha-card { padding: 12px 12px 8px; }
+        :host { display: block; min-width: 0; }
+        ha-card { padding: 12px 12px 8px; min-width: 0; }
         .head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
         .title { font-size: var(--ha-card-header-font-size, 18px); font-weight: 500; color: var(--primary-text-color); }
         .sub { font-size: 12px; color: var(--secondary-text-color); }
