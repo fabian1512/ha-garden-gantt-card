@@ -8,7 +8,7 @@
  * https://github.com/fabian1512/ha-garden-gantt-card
  */
 
-const VERSION = "0.1.1";
+const VERSION = "0.1.2";
 
 const MONTHS_DE = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
 const MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -99,6 +99,10 @@ class GardenGanttCard extends HTMLElement {
   getCardSize() {
     const rows = this._rows ? this._rows.length : 8;
     return Math.max(4, Math.min(30, Math.ceil(rows / 3) + 3));
+  }
+
+  getGridOptions() {
+    return { columns: 12, min_columns: 6 };
   }
 
   connectedCallback() {
