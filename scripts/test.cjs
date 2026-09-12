@@ -1,11 +1,11 @@
 /**
  * Logic test for Garden Gantt Card — no browser required.
  *
- * Loads dist/garden-gantt-card.js in a minimal DOM stub, feeds representative
- * calendar events (matching the Gartenplan event shapes) and asserts the
- * month-bar layout.
+ * Loads dist/garden-gantt-card.js in a minimal DOM stub and asserts the new
+ * model: one row per plant (location), activity-colored bars, lane stacking of
+ * overlapping activities and labels inside the bars.
  *
- * Run: node scripts/test.js
+ * Run: npm test
  */
 
 const fs = require("fs");
@@ -17,16 +17,17 @@ const SRC = fs.readFileSync(
   "utf8"
 );
 
-function makeCard() {
-  class HTMLElementStub {
-    attachShadow() {
-      const shadow = { innerHTML: "" };
-      this.shadowRoot = shadow;
-      return shadow;
-    }
+class HTMLElementStub {
+  attachShadow() {
+    const shadow = { innerHTML: "" };
+    this.shadowRoot = shadow;
+    return shadow;
   }
+}
+
+function makeCard() {
   const sandbox = {
-    console,
+    console: { info: () => {}, log: console.log, error: console.error },
     HTMLElement: HTMLElementStub,
     customElements: { define: () => {} },
     window: {},
@@ -40,187 +41,138 @@ function makeCard() {
   return card;
 }
 
-function coverage(card, events, start, months) {
+const START = "2026-09-01";
+
+function build(events, cfg) {
+  const card = makeCard();
+  card.setConfig(Object.assign({ entity: "calendar.gartenplan", start: START, months: 12 }, cfg || {}));
   card._events = events;
-  card.setConfig({ entity: "calendar.gartenplan", start, months });
-  card._events = events; // setConfig clears, put back
-  const built = card._buildRows();
-  return built.rows.map((r) => ({ label: r.label, active: r.active }));
+  return { card, model: card._buildModel() };
 }
 
 let failures = 0;
 function check(name, cond, detail) {
-  if (cond) {
-    console.log(`  ok   ${name}`);
-  } else {
+  if (cond) console.log(`  ok   ${name}`);
+  else {
     failures++;
     console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ""}`);
   }
 }
 
-console.log("Garden Gantt Card — layout tests\n");
+console.log("Garden Gantt Card — model tests\n");
 
-// Window: Sep 2026 .. Aug 2027 (12 months, indices 0..11)
-const START = "2026-09-01";
-
-// 1) Two-month all-day span (Sep 1 – Nov 1 exclusive) -> Sep + Okt
+// 1) One row per plant, even with several activities
 {
-  const card = makeCard();
-  const rows = coverage(
-    card,
+  const { model } = build([
+    { summary: "Tomate: Vorkultur", location: "Tomate", start: { date: "2027-03-01" }, end: { date: "2027-04-01" } },
+    { summary: "Tomate: Auspflanzen", location: "Tomate", start: { date: "2027-05-16" }, end: { date: "2027-06-01" } },
+    { summary: "Gurke: Vorkultur", location: "Gurke", start: { date: "2027-04-01" }, end: { date: "2027-05-01" } },
+  ]);
+  check("one row per plant", model.rows.length === 2, JSON.stringify(model.rows.map((r) => r.row)));
+  const tomate = model.rows.find((r) => r.row === "Tomate");
+  check("both Tomate activities in one row", tomate.segments.length === 2, JSON.stringify(tomate.segments.length));
+  check("rows are sorted by plant", model.rows[0].row === "Gurke" && model.rows[1].row === "Tomate");
+}
+
+// 2) Different activities -> different colors (per type)
+{
+  const { model } = build([
+    { summary: "Tomate: Vorkultur", location: "Tomate", start: { date: "2027-03-01" }, end: { date: "2027-04-01" } },
+    { summary: "Tomate: Ernte", location: "Tomate", start: { date: "2027-07-01" }, end: { date: "2027-08-01" } },
+  ]);
+  const row = model.rows[0];
+  check("activities differ in color", row.segments[0].color !== row.segments[1].color, JSON.stringify(row.segments.map((s) => s.color)));
+  check("Vorkultur classified as pflanzen", row.segments[0].type === "pflanzen");
+  check("Ernte classified as ernte", row.segments[1].type === "ernte");
+}
+
+// 3) Overlapping activities are stacked into separate lanes
+{
+  const { model } = build([
+    { summary: "Tomate: Ausgeizen", location: "Tomate", start: { date: "2027-05-01" }, end: { date: "2027-07-01" } },
+    { summary: "Tomate: Düngen", location: "Tomate", start: { date: "2027-06-01" }, end: { date: "2027-08-01" } },
+  ]);
+  const row = model.rows[0];
+  check("overlap uses 2 lanes", row.lanes.length === 2, JSON.stringify(row.lanes.length));
+  check("overlapping segments get different lanes", row.segments[0].lane !== row.segments[1].lane);
+}
+
+// 4) Non-overlapping activities share one lane
+{
+  const { model } = build([
+    { summary: "Tomate: Vorkultur", location: "Tomate", start: { date: "2027-03-01" }, end: { date: "2027-04-01" } },
+    { summary: "Tomate: Ernte", location: "Tomate", start: { date: "2027-07-01" }, end: { date: "2027-08-01" } },
+  ]);
+  const row = model.rows[0];
+  check("non-overlap stays in 1 lane", row.lanes.length === 1 && row.segments.every((s) => s.lane === 0));
+}
+
+// 5) DTEND is exclusive: Sep 1 – Nov 1 fills Sep+Okt only
+{
+  const { model } = build([
+    { summary: "Kartoffel: Ernte (Lager)", location: "Kartoffel", start: { date: "2026-09-01" }, end: { date: "2026-11-01" } },
+  ]);
+  const seg = model.rows[0].segments[0];
+  check("Sep1–Nov1 -> left 0%", Math.abs(seg.left) < 0.001, String(seg.left));
+  check("Sep1–Nov1 -> spans ~2 months (Sep+Okt)", seg.width > 16 && seg.width < 17.5 && seg.left + seg.width < 100 / 12 * 3, String(seg.width));
+}
+
+// 6) Timed event lands in its month
+{
+  const { model } = build([
+    { summary: "Gurke: Düngen", location: "Gurke", start: { dateTime: "2027-06-14T08:00:00+02:00" }, end: { dateTime: "2027-06-14T09:00:00+02:00" } },
+  ]);
+  const seg = model.rows[0].segments[0];
+  check("timed event inside Jun (75–83.3%)", seg.left >= 75 && seg.left < 100 / 1.2, String(seg.left));
+}
+
+// 7) Row falls back to summary prefix when no location, then to Allgemein
+{
+  const { model } = build([
+    { summary: "Rose: Pflanzen", start: { date: "2027-03-01" }, end: { date: "2027-04-01" } },
+    { summary: "Eisheilige", start: { date: "2027-05-11" }, end: { date: "2027-05-16" } },
+  ]);
+  const names = model.rows.map((r) => r.row).sort();
+  check("summary prefix becomes the row", names.includes("Rose"), JSON.stringify(names));
+  check("no prefix/location -> Allgemein", names.includes("Allgemein"), JSON.stringify(names));
+}
+
+// 8) Labels shown only when the bar is wide enough
+{
+  const { model } = build([
+    { summary: "Tomate: Ernte", location: "Tomate", start: { date: "2027-05-01" }, end: { date: "2027-06-01" } },
+    { summary: "Tomate: Vorkultur", location: "Tomate", start: { date: "2027-05-01" }, end: { date: "2027-05-16" } },
+  ]);
+  const row = model.rows[0];
+  const full = row.segments.find((s) => s.label === "Ernte");
+  const short = row.segments.find((s) => s.label === "Vorkultur");
+  check("1-month bar shows its label", full.showLabel === true);
+  check("half-month bar hides its label", short.showLabel === false);
+}
+
+// 9) Render applies taller bars, colors and activity text; escapes HTML
+{
+  const { card } = build(
     [
-      {
-        summary: "Kartoffel: Ernte Lagerkartoffeln",
-        description: "Vor dem ersten Frost",
-        start: { date: "2026-09-01" },
-        end: { date: "2026-11-01" },
-      },
+      { summary: "Rasen & Beet: Herbst-Düngung", location: "Rasen & <Beet>", start: { date: "2026-09-01" }, end: { date: "2026-10-01" } },
     ],
-    START,
-    12
+    { bar_height: 30, activity_colors: { duengen: "#123456" } }
   );
-  const a = rows[0].active;
-  check("all-day Sep1–Nov1 covers Sep+Okt", a[0] && a[1] && !a[2], JSON.stringify(a));
-  check("row keeps full summary", rows[0].label === "Kartoffel: Ernte Lagerkartoffeln");
-}
-
-// 2) Single-month event (Mai 2027 is index 8 in a Sep-start window)
-{
-  const card = makeCard();
-  const rows = coverage(
-    card,
-    [
-      {
-        summary: "Tomate: Auspflanzen",
-        start: { date: "2027-05-01" },
-        end: { date: "2027-06-01" },
-      },
-    ],
-    START,
-    12
-  );
-  check("Mai 2027 -> index 8 only", rows[0].active[8] === true && rows[0].active.filter(Boolean).length === 1, JSON.stringify(rows[0].active));
-}
-
-// 3) Spanning the year boundary (Dez 2026 – Feb 2027 -> indices 3,4)
-{
-  const card = makeCard();
-  const rows = coverage(
-    card,
-    [
-      {
-        summary: "Thuja-Hecke: Radikaler Rückschnitt",
-        start: { date: "2026-10-01" },
-        end: { date: "2027-03-01" },
-      },
-    ],
-    START,
-    12
-  );
-  check("Okt–Feb spans 5 cells (Okt,Nov,Dez,Jan,Feb)", rows[0].active.slice(1, 6).every(Boolean) && !rows[0].active[6], JSON.stringify(rows[0].active));
-}
-
-// 4) Timed event (dateTime) is included and clamped to its day
-{
-  const card = makeCard();
-  const rows = coverage(
-    card,
-    [
-      {
-        summary: "Gurke: Düngen",
-        start: { dateTime: "2027-06-14T08:00:00+02:00" },
-        end: { dateTime: "2027-06-14T09:00:00+02:00" },
-      },
-    ],
-    START,
-    12
-  );
-  check("timed event in Jun 2027 -> index 9", rows[0].active[9] === true, JSON.stringify(rows[0].active));
-}
-
-// 5) Grouping: groups map assigns categories, unknown falls back to location
-{
-  const card = makeCard();
-  card._events = [
-    { summary: "Tomate: Ernte", start: { date: "2027-07-01" }, end: { date: "2027-08-01" } },
-    { summary: "Gurke: Ernte", start: { date: "2027-07-01" }, end: { date: "2027-08-01" } },
-    { summary: "Unbekannt: X", location: "Sonstiges", start: { date: "2027-07-01" }, end: { date: "2027-08-01" } },
-  ];
-  card.setConfig({
-    entity: "calendar.gartenplan",
-    start: START,
-    months: 12,
-    groups: { Tomate: "Gemüse", Gurke: "Gemüse" },
-  });
-  card._events = [
-    { summary: "Tomate: Ernte", start: { date: "2027-07-01" }, end: { date: "2027-08-01" } },
-    { summary: "Gurke: Ernte", start: { date: "2027-07-01" }, end: { date: "2027-08-01" } },
-    { summary: "Unbekannt: X", location: "Sonstiges", start: { date: "2027-07-01" }, end: { date: "2027-08-01" } },
-  ];
-  const built = card._buildRows();
-  const g = built.rows.map((r) => r.group);
-  check("groups map applied", g.filter((x) => x === "Gemüse").length === 2, JSON.stringify(g));
-  check("location fallback used", g.includes("Sonstiges"), JSON.stringify(g));
-  check("same group shares one color", new Set(built.rows.filter((r) => r.group === "Gemüse").map((r) => r.color)).size === 1);
-}
-
-// 6) Events outside the window produce no active cell
-{
-  const card = makeCard();
-  const rows = coverage(
-    card,
-    [{ summary: "Alt: X", start: { date: "2026-01-01" }, end: { date: "2026-02-01" } }],
-    START,
-    12
-  );
-  check("out-of-window event has no active cells", rows[0].active.every((x) => x === false), JSON.stringify(rows[0].active));
-}
-
-// 7) Group color is applied to the rendered bar cells
-{
-  const card = makeCard();
-  card.setConfig({
-    entity: "calendar.gartenplan",
-    start: START,
-    months: 12,
-    groups: { Erdbeere: "Obst" },
-    group_colors: { Obst: "#e91e63" },
-  });
-  card._events = [
-    { summary: "Erdbeere: Ernte", start: { date: "2027-05-01" }, end: { date: "2027-08-01" } },
-  ];
   card._render();
   const html = card.shadowRoot.innerHTML;
-  check("rendered HTML applies group color", html.includes("--gg-bar:#e91e63"), "no --gg-bar:#e91e63 in HTML");
-  check("bars use inner div (Safari-safe)", html.includes('<div class="bar"></div>'), "no .bar div found");
-  check("rendered HTML escapes nothing broken", html.includes("Erdbeere: Ernte"));
+  check("bar height applied", html.includes("height:30px"));
+  check("activity color applied", html.includes("background:#123456"));
+  check("activity written into the bar", html.includes("<span>Herbst-Düngung</span>"));
+  check("plant label escaped", html.includes("Rasen &amp; &lt;Beet&gt;") && !html.includes("Rasen & <Beet>"));
 }
 
-// 8) group_keywords: match by substring, works for titles without a colon
+// 10) Empty window is handled
 {
-  const card = makeCard();
-  card.setConfig({
-    entity: "calendar.gartenplan",
-    start: START,
-    months: 12,
-    group_keywords: { Rasen: ["Rasen"], Gemüse: ["Tomate", "Kartoffel"], Obst: ["Apfel", "Obstbäume"] },
-  });
-  card._events = [
-    { summary: "Rasen kalken", start: { date: "2027-03-01" }, end: { date: "2027-04-01" } },
-    { summary: "Tomaten: letzte Ernte", start: { date: "2027-10-01" }, end: { date: "2027-11-01" } },
-    { summary: "Obstbäume: Stamm schützen", start: { date: "2027-11-01" }, end: { date: "2027-12-01" } },
-    { summary: "Unbekannt ohne Schlüsselwort", start: { date: "2027-03-01" }, end: { date: "2027-04-01" } },
-  ];
-  const g = card._buildRows().rows.map((r) => r.group);
-  check("keyword group 'Rasen' matched", g[0] === "Rasen", JSON.stringify(g));
-  check("keyword group 'Gemüse' matched (Tomaten)", g.includes("Gemüse"), JSON.stringify(g));
-  check("keyword group 'Obst' matched (Obstbäume)", g.includes("Obst"), JSON.stringify(g));
-  check("unmatched falls back to Aufgaben", g.includes("Aufgaben"), JSON.stringify(g));
+  const { model } = build([
+    { summary: "Alt: X", location: "Alt", start: { date: "2020-01-01" }, end: { date: "2020-02-01" } },
+  ]);
+  check("out-of-window events produce no rows", model.rows.length === 0);
 }
 
-console.log(
-  failures === 0
-    ? "\nAll tests passed."
-    : `\n${failures} test(s) failed.`
-);
+console.log(failures === 0 ? "\nAll tests passed." : `\n${failures} test(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

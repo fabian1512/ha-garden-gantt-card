@@ -1,9 +1,9 @@
 /**
  * End-to-end render check for Garden Gantt Card against the real garden CSV.
  *
- * Rebuilds the calendar events from Gartenplan_Kalender.csv (same logic used
- * to import them into calendar.gartenplan), runs them through the card's
- * layout code and prints the resulting Gantt as ASCII.
+ * Rebuilds calendar events from Gartenplan_Kalender.csv (one event per plant ×
+ * activity), runs them through the card's model and prints an ASCII Gantt with
+ * one row per plant and a type marker per month.
  *
  * Run: node scripts/render-csv.cjs /path/to/Gartenplan_Kalender.csv
  */
@@ -30,7 +30,6 @@ const csvRows = lines.slice(1).map((line) => {
   const cells = line.split(";");
   return {
     pflanze: cells[idx("Pflanze")],
-    kategorie: cells[idx("Kategorie")],
     aktivitaet: cells[idx("Aktivität")],
     hinweise: cells[idx("Hinweise")] || "",
     active: MONTHS.filter((m) => (cells[idx(m)] || "").trim().toLowerCase() === "x"),
@@ -51,12 +50,10 @@ for (let i = 0; i < 12; i++) {
 
 const pad = (n) => String(n).padStart(2, "0");
 const events = [];
-const groups = {};
 for (const r of csvRows) {
   if (!r.active.length) continue;
-  groups[r.pflanze] = r.kategorie;
   const winMonths = window.filter((w) => r.active.includes(MONTHS[w.m - 1]));
-  // contiguous runs -> one event each
+  // contiguous month runs -> one event each
   const runs = [];
   let cur = [winMonths[0]];
   for (let i = 1; i < winMonths.length; i++) {
@@ -77,6 +74,7 @@ for (const r of csvRows) {
     const em = e.m === 12 ? 1 : e.m + 1;
     events.push({
       summary: `${r.pflanze}: ${r.aktivitaet}`,
+      location: r.pflanze,
       description: `Monate: ${r.active.join(", ")}${r.hinweise ? ` | ${r.hinweise}` : ""}`,
       start: { date: `${s.y}-${pad(s.m)}-01` },
       end: { date: `${ey}-${pad(em)}-01` },
@@ -105,29 +103,28 @@ vm.createContext(sandbox);
 vm.runInContext(SRC + "\n;globalThis.__Card = GardenGanttCard;", sandbox);
 
 const card = new sandbox.__Card();
-card.setConfig({
-  entity: "calendar.gartenplan",
-  start: "2026-09-01",
-  months: 12,
-  groups,
-});
+card.setConfig({ entity: "calendar.gartenplan", start: "2026-09-01", months: 12 });
 card._events = events;
-const built = card._buildRows();
+const model = card._buildModel();
 
 // --- print ASCII Gantt ----------------------------------------------------
-const hdr = " ".repeat(38) + window.map((w) => MONTHS[w.m - 1].padEnd(4)).join("");
+const MARK = { ernte: "E", schutz: "S", duengen: "D", pflanzen: "A", pflege: "P", schnitt: "C" };
+const hdr = " ".repeat(34) + window.map((w) => MONTHS[w.m - 1].padEnd(4)).join("");
 console.log(hdr);
-let lastGroup = null;
-for (const row of built.rows) {
-  if (row.group !== lastGroup) {
-    console.log(`\n== ${row.group} ==`);
-    lastGroup = row.group;
-  }
-  const bars = row.active.map((on) => (on ? "██" : "· ").padEnd(4)).join("");
-  const label = row.label.length > 36 ? row.label.slice(0, 35) + "…" : row.label;
-  console.log(label.padEnd(38) + bars);
+console.log(" ".repeat(34) + window.map(() => "----").join(""));
+
+for (const row of model.rows) {
+  const cells = window.map((w) => {
+    const hits = row.segments.filter((s) => {
+      const cellStart = new Date(w.y, w.m - 1, 1).getTime();
+      const cellEnd = new Date(w.m === 12 ? w.y + 1 : w.y, w.m === 12 ? 0 : w.m, 1).getTime();
+      return s.start.getTime() < cellEnd && s.end.getTime() > cellStart;
+    });
+    return (hits.length ? MARK[hits[0].type] || "?" : "·") + "  ";
+  }).join("");
+  const label = row.row.length > 32 ? row.row.slice(0, 31) + "…" : row.row;
+  console.log(label.padEnd(34) + cells);
 }
 
-console.log(
-  `\n${events.length} events, ${built.rows.length} rows, ${built.groupOrder.length} groups — layout OK`
-);
+console.log("\nLegende:", Object.entries(MARK).map(([k, v]) => `${v}=${k}`).join("  "));
+console.log(`${events.length} events, ${model.rows.length} Pflanzen-Zeilen, ${model.typesUsed.length} Tätigkeitstypen — layout OK`);

@@ -1,28 +1,32 @@
 # Garden Gantt Card
 
 A **year/month Gantt-style** Lovelace card for Home Assistant. It reads the events
-of a single `calendar.*` entity live and renders them as colored bars across a
-12-month grid — ideal for a garden sowing/care plan, project timelines, or any
+of a single `calendar.*` entity live and renders **one row per plant**, with each
+activity drawn as a colored bar that carries its own label. Overlapping
+activities are stacked into lanes. Ideal for a garden sowing/care plan or any
 long-running seasonal schedule.
 
 ```
-Aufgabe                    Jan Feb Mär Apr Mai Jun Jul Aug Sep Okt Nov Dez
-Kartoffel: Vorkeimen        ██  ██
-Kartoffel: Pflanzen             ██  ██
-Kartoffel: Ernte                            ██  ██  ██  ██
-Kartoffel: Ernte Lagerkartoffeln            ██  ██  ██  ██
+Pflanze              Jan  Feb  Mär  Apr  Mai  Jun  Jul  Aug  Sep  Okt  Nov  Dez
+Tomate                    Vorkultur  Auspflanzen  Ausgeizen
+                                                    Düngen
+                                                    Ernte
 ```
 
 ## Features
 
 - **Live calendar data** — pulls events from the HA calendar REST API, so edits
   in the calendar show up without regenerating anything.
-- **12-month grid** (configurable 1–24), month columns with current month highlighted.
-- **Grouping & colors** — group rows by plant/category via a simple `groups` map,
-  each group gets its own color (overridable).
-- **Tooltips** — the event description is shown on hover.
-- **Theme-aware** — uses Home Assistant CSS variables (light/dark).
-- **No dependencies** — single JS file, no build step.
+- **One row per subject** — the row (plant) comes from the event `location`,
+  falling back to the text before `:` in the summary.
+- **Activity colors** — the bar color is derived from the activity text
+  (`Pflanzen/Aussaat`, `Pflege`, `Düngen`, `Schnitt`, `Ernte`, `Schutz`).
+- **Lane stacking** — overlapping activities in the same row are drawn on
+  separate lanes instead of hiding each other.
+- **Labels in the bars** — the activity is written into the bar when it is wide
+  enough; the description shows on hover.
+- **Taller bars** (configurable), month grid, current month highlighted.
+- **Theme-aware**, **no dependencies** — single JS file, no build step.
 
 ## Installation (HACS)
 
@@ -43,44 +47,57 @@ type: module
 
 ```yaml
 type: custom:garden-gantt-card
-entity: calendar.gartenplan
+entity: calendar.gartenplan_nextcloud
 title: Gartenplan
-start: "2026-09-01"   # optional; default = first day of the current month
 months: 12
-groups:              # optional: map event title prefix (before ":") -> group
-  Kartoffel: Gemüse
-  Tomate: Gemüse
-  Erdbeere: Obst
-  Rose: Zierpflanze
-group_colors:         # optional
-  Gemüse: "#4caf50"
-  Obst: "#e91e63"
-  Zierpflanze: "#9c27b0"
+bar_height: 22
+activity_colors:
+  pflanzen: "#43a047"
+  pflege: "#1e88e5"
+  duengen: "#fb8c00"
+  schnitt: "#8e24aa"
+  ernte: "#e53935"
+  schutz: "#00897b"
 ```
+
+### Event convention
+
+```text
+SUMMARY : Pflanzenname: Tätigkeit
+LOCATION: Pflanzenname
+```
+
+The card reads the row from `location` (or the summary prefix), uses the text
+after `:` as the bar label and classifies the label into an activity type for
+coloring. A calendar event without a location and without `:` is placed in
+`Allgemein`.
 
 ## Options
 
 | Option | Type | Default | Description |
 | ------ | ---- | ------- | ----------- |
-| `entity` | string | **required** | Calendar entity, e.g. `calendar.gartenplan` |
+| `entity` | string | **required** | Calendar entity, e.g. `calendar.gartenplan_nextcloud` |
 | `title` | string | `Gartenplan` | Card title |
 | `start` | string | first of current month | Window start (`YYYY-MM-DD`) |
 | `months` | number | `12` | Number of month columns (1–24) |
-| `groups` | map | `{}` | Map of event prefix (text before `:`) → group label |
-| `group_colors` | map | palette | Map of group label → color |
-| `show_legend` | boolean | `true` | Show the group legend |
+| `row_field` | string | `location` | Row source: `location` or `summary` |
+| `bar_height` | number | `22` | Bar height in px |
+| `lane_gap` | number | `3` | Vertical gap between lanes in px |
+| `row_gap` | number | `10` | Vertical gap between plants in px |
+| `show_labels` | boolean | `true` | Write the activity into the bar |
+| `show_legend` | boolean | `true` | Show the activity-type legend |
+| `activity_colors` | map | palette | Override color per activity type |
+| `activity_keywords` | map | built-in | Override keyword list per activity type |
 | `refresh_interval` | number | `300` | Re-fetch interval in seconds (`0` = off) |
 | `language` | string | HA locale | Month-name language (`de`/`en`) |
 
-If an event has a `location`, it is used as the group when no `groups` mapping
-matches. Events without a group are collected under **Aufgaben**.
-
 ## How it works
 
-The card calls `GET /api/calendars/<entity>?start=…&end=…` over the Home
-Assistant WebSocket/ REST bridge (`hass.callApi`) and lays out each event as a
-row of month cells. All-day events use the exclusive `end` date, so a
-single-day event spans one cell and a `Sep 1 – Nov 1` event fills Sep and Oct.
+The card calls `GET /api/calendars/<entity>?start=…&end=…` and turns every event
+into a segment: the row is `location` (or the summary prefix), the label is the
+text after `:`, and the activity type is matched by keyword. Segments are packed
+into lanes so overlaps don't collide, then positioned on a month grid. All-day
+events use the exclusive `end` date, so `Sep 1 – Nov 1` fills Sep and Oct.
 
 ## License
 

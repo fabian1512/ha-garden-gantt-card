@@ -2,20 +2,31 @@
  * Garden Gantt Card
  *
  * A year/month Gantt-style overview for one Home Assistant calendar entity.
- * Reads events live from the calendar REST API and renders them as colored
- * bars across a 12-month grid, optionally grouped (e.g. plant category).
+ * One row per subject (plant), each activity drawn as a colored bar carrying
+ * its own label. Activities that overlap are stacked into lanes.
+ *
+ * Subject & activity are derived from the calendar event:
+ *   - row (plant)   : event.location, else the text before ":" in the summary
+ *   - activity label: the text after ":" in the summary
+ *   - color         : activity keyword class (Pflanzen, Pflege, Düngen, …)
  *
  * https://github.com/fabian1512/ha-garden-gantt-card
  */
 
-const VERSION = "0.1.5";
+const VERSION = "0.2.0";
 
 const MONTHS_DE = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
 const MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-const DEFAULT_GROUP_COLORS = [
-  "#4caf50", "#e91e63", "#ff9800", "#9c27b0", "#009688", "#3f51b5",
-  "#795548", "#607d8b", "#8bc34a", "#f44336", "#00bcd4", "#cddc39",
+// Activity classes: order matters (first match wins). Keywords are matched
+// case-insensitively against the activity label.
+const DEFAULT_ACTIVITY_RULES = [
+  { key: "ernte", label: "Ernte", color: "#e53935", kw: ["ernte", "ernten", "pflück"] },
+  { key: "schutz", label: "Schutz", color: "#00897b", kw: ["schutz", "schützen", "leimring", "pheromon", "netz", "anhäufeln", "vlies", "weißel", "weissel"] },
+  { key: "duengen", label: "Düngen", color: "#fb8c00", kw: ["düng", "kompost", "hornspäne", "kalk"] },
+  { key: "pflanzen", label: "Pflanzen/Aussaat", color: "#43a047", kw: ["aussaat", "aussä", "säen", "pflanz", "vorkultur", "vorkeim", "pikier", "direktsaat", "steck", "setzen"] },
+  { key: "pflege", label: "Pflege", color: "#1e88e5", kw: ["pflege", "häufel", "mulch", "stütz", "gieß", "jät", "hack", "binden", "ausdünn", "behang", "vertikutier", "laub", "mähen"] },
+  { key: "schnitt", label: "Schnitt", color: "#8e24aa", kw: ["schnitt", "schneid", "ausgeiz", "kappen", "entfern", "teil", "stutz", "verjüng"] },
 ];
 
 const pad = (n) => String(n).padStart(2, "0");
@@ -33,7 +44,6 @@ function esc(s) {
 function parseDate(value) {
   if (!value) return null;
   if (typeof value === "string") {
-    // "2026-09-01" or "2026-09-01T08:00:00+02:00"
     const d = value.length <= 10 ? new Date(`${value}T00:00:00`) : new Date(value);
     return isNaN(d.getTime()) ? null : d;
   }
@@ -75,10 +85,14 @@ class GardenGanttCard extends HTMLElement {
         title: "",
         start: null,
         months: 12,
-        groups: {},
-        group_colors: {},
+        row_field: "location",
+        bar_height: 22,
+        lane_gap: 3,
+        row_gap: 10,
+        show_labels: true,
         show_legend: true,
-        show_empty_months: true,
+        activity_colors: {},
+        activity_keywords: {},
         refresh_interval: 300,
         language: null,
       },
@@ -97,8 +111,8 @@ class GardenGanttCard extends HTMLElement {
   }
 
   getCardSize() {
-    const rows = this._rows ? this._rows.length : 8;
-    return Math.max(4, Math.min(30, Math.ceil(rows / 3) + 3));
+    const rows = this._model ? this._model.rows.length : 8;
+    return Math.max(4, Math.min(40, rows + 3));
   }
 
   getGridOptions() {
@@ -149,6 +163,25 @@ class GardenGanttCard extends HTMLElement {
     return { start, end, months };
   }
 
+  _rules() {
+    const colors = this.config.activity_colors || {};
+    const keywords = this.config.activity_keywords || {};
+    return DEFAULT_ACTIVITY_RULES.map((r) => ({
+      key: r.key,
+      label: r.label,
+      color: colors[r.key] || r.color,
+      kw: keywords[r.key] || r.kw,
+    }));
+  }
+
+  _classify(label) {
+    const hay = String(label).toLowerCase();
+    for (const rule of this._rules()) {
+      if (rule.kw.some((k) => hay.includes(String(k).toLowerCase()))) return rule;
+    }
+    return { key: "pflege", label: "Pflege", color: (this.config.activity_colors || {}).pflege || "#1e88e5" };
+  }
+
   async _maybeFetch() {
     if (!this._hass || !this.config) return;
     const { start, end } = this._window();
@@ -179,166 +212,168 @@ class GardenGanttCard extends HTMLElement {
     }
   }
 
-  _buildRows() {
-    const { start, months } = this._window();
+  _buildModel() {
+    const { start: winStart, end: winEnd, months } = this._window();
     const monthsList = this._months();
     const lang = this._language();
-    const groups = this.config.groups || {};
-    const groupColors = this.config.group_colors || {};
-    const groupKeywords = this.config.group_keywords || {};
+    const rowField = this.config.row_field || "location";
 
     const monthInfos = [];
+    const now = new Date();
     for (let i = 0; i < months; i++) {
-      const d = addMonths(start, i);
+      const d = addMonths(winStart, i);
       monthInfos.push({
         date: d,
         label: monthsList[d.getMonth()],
         year: d.getFullYear(),
         isJanuary: d.getMonth() === 0,
+        isNow: d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth(),
         start: d,
         end: addMonths(d, 1),
       });
     }
 
-    const now = new Date();
-    const currentMonthKey = `${now.getFullYear()}-${now.getMonth()}`;
+    const total = winEnd.getTime() - winStart.getTime();
+    const msPerMonth = total / months;
 
-    const events = (this._events || [])
-      .map((ev) => {
-        const evStart = parseDate(ev.start);
-        let evEnd = parseDate(ev.end);
-        if (!evStart) return null;
-        if (!evEnd) evEnd = new Date(evStart.getTime() + 86400000);
-        const summary = ev.summary || "(ohne Titel)";
-        const plant = summary.includes(":") ? summary.split(":")[0].trim() : summary.trim();
-        let group = groups[plant];
-        if (!group) {
-          const hay = summary.toLowerCase();
-          for (const [g, keys] of Object.entries(groupKeywords)) {
-            if ((keys || []).some((k) => hay.includes(String(k).toLowerCase()))) {
-              group = g;
-              break;
-            }
-          }
-        }
-        if (!group && ev.location) group = String(ev.location);
-        if (!group) group = "Aufgaben";
-        return {
-          summary,
-          plant,
-          group,
-          description: ev.description || "",
-          start: evStart,
-          end: evEnd,
-        };
-      })
-      .filter(Boolean);
+    const segments = [];
+    for (const ev of this._events || []) {
+      const evStart = parseDate(ev.start);
+      let evEnd = parseDate(ev.end);
+      if (!evStart) continue;
+      if (!evEnd || evEnd <= evStart) evEnd = new Date(evStart.getTime() + 86400000);
+      if (evStart >= winEnd || evEnd <= winStart) continue;
 
-    events.sort((a, b) => a.start - b.start || a.summary.localeCompare(b.summary, lang));
+      const summary = ev.summary || "(ohne Titel)";
+      const ci = summary.indexOf(":");
+      const prefix = ci > 0 ? summary.slice(0, ci).trim() : "";
+      const rest = ci > 0 ? summary.slice(ci + 1).trim() : summary.trim();
+      const location = ev.location ? String(ev.location).trim() : "";
+      const row = (rowField === "location" && location) ? location : (prefix || "Allgemein");
+      const label = prefix ? rest : summary;
 
-    const groupOrder = [];
-    const byGroup = new Map();
-    for (const ev of events) {
-      if (!byGroup.has(ev.group)) {
-        byGroup.set(ev.group, []);
-        groupOrder.push(ev.group);
-      }
-      byGroup.get(ev.group).push(ev);
+      const cls = this._classify(label);
+      segments.push({
+        row,
+        label,
+        type: cls.key,
+        typeLabel: cls.label,
+        color: cls.color,
+        description: ev.description || "",
+        start: evStart,
+        end: evEnd,
+      });
     }
 
-    const palette = DEFAULT_GROUP_COLORS;
-    const colorFor = (group, idx) => groupColors[group] || palette[idx % palette.length];
+    segments.sort((a, b) => a.row.localeCompare(b.row, lang) || a.start - b.start || a.label.localeCompare(b.label, lang));
 
     const rows = [];
-    groupOrder.forEach((group, gi) => {
-      const color = colorFor(group, gi);
-      const groupEvents = byGroup.get(group);
-      groupEvents.forEach((ev) => {
-        const active = monthInfos.map(
-          (mi) => ev.start < mi.end && ev.end > mi.start
-        );
-        const firstIdx = active.indexOf(true);
-        rows.push({
-          group,
-          color,
-          summary: ev.summary,
-          label: ev.summary,
-          description: ev.description,
-          active,
-          firstIdx,
-        });
-      });
-    });
+    const byRow = new Map();
+    for (const seg of segments) {
+      if (!byRow.has(seg.row)) {
+        const row = { row: seg.row, segments: [], lanes: [] };
+        byRow.set(seg.row, row);
+        rows.push(row);
+      }
+      byRow.get(seg.row).segments.push(seg);
+    }
 
-    return { monthInfos, rows, groupOrder, byGroup, colorFor, currentMonthKey };
+    const typesUsed = new Map();
+    for (const row of rows) {
+      row.segments.sort((a, b) => a.start - b.start || a.end - b.end);
+      for (const seg of row.segments) {
+        // greedy lane packing: reuse a lane whose last bar ends at/before this start
+        let lane = row.lanes.findIndex((lastEnd) => lastEnd <= seg.start.getTime());
+        if (lane === -1) {
+          lane = row.lanes.length;
+          row.lanes.push(0);
+        }
+        row.lanes[lane] = seg.end.getTime();
+        seg.lane = lane;
+        seg.left = ((Math.max(seg.start, winStart) - winStart) / total) * 100;
+        seg.width = ((Math.min(seg.end, winEnd) - Math.max(seg.start, winStart)) / total) * 100;
+        const spanMonths = (seg.width / 100) * months;
+        seg.showLabel = this.config.show_labels !== false && spanMonths >= 0.85;
+        if (!typesUsed.has(seg.type)) typesUsed.set(seg.type, { label: seg.typeLabel, color: seg.color });
+      }
+    }
+
+    rows.sort((a, b) => a.row.localeCompare(b.row, lang));
+
+    return { monthInfos, rows, months, winStart, winEnd, msPerMonth, typesUsed: [...typesUsed.values()] };
   }
 
   _render() {
     if (!this.config) return;
-    const { start, end, months } = this._window();
-    const built = this._buildRows();
-    this._rows = built.rows;
-    const { monthInfos, rows, groupOrder, colorFor } = built;
+    const { months } = this._window();
+    const model = this._buildModel();
+    this._model = model;
+    const { monthInfos, rows, typesUsed } = model;
     const title = this.config.title || "Gartenplan";
-    const lang = this._language();
+    const barH = Math.max(12, Number(this.config.bar_height) || 22);
+    const laneGap = Math.max(0, Number(this.config.lane_gap) || 3);
+    const rowGap = Math.max(0, Number(this.config.row_gap) || 10);
 
     const rangeLabel = `${monthInfos[0].label} ${monthInfos[0].year} – ${
       monthInfos[monthInfos.length - 1].label
     } ${monthInfos[monthInfos.length - 1].year}`;
 
+    const tasks = rows.reduce((n, r) => n + r.segments.length, 0);
+    const colWidth = 100 / months;
+
+    const gridCells = (cls) =>
+      monthInfos.map((mi) => `<div class="${cls}${mi.isNow ? " now" : ""}"></div>`).join("");
+
+    const header = `<div class="hrow">
+      <div class="hlabel">Pflanze</div>
+      <div class="htrack">${monthInfos
+        .map((mi) => {
+          const yr = mi.isJanuary ? `<span class="yr">${mi.year}</span>` : "";
+          return `<div class="hcell${mi.isNow ? " now" : ""}">${yr}${esc(mi.label)}</div>`;
+        })
+        .join("")}</div>
+    </div>`;
+
     let body = "";
+    for (const row of rows) {
+      const lanes = Math.max(1, row.lanes.length);
+      const trackH = lanes * barH + (lanes - 1) * laneGap;
+      const bars = row.segments
+        .map((seg) => {
+          const top = seg.lane * (barH + laneGap);
+          const tip = seg.description ? ` title="${esc(seg.description)}"` : "";
+          const txt = seg.showLabel ? `<span>${esc(seg.label)}</span>` : "";
+          return `<div class="seg" style="left:${seg.left.toFixed(3)}%;width:${seg.width.toFixed(
+            3
+          )}%;top:${top}px;height:${barH}px;background:${esc(seg.color)}"${tip}>${txt}</div>`;
+        })
+        .join("");
+      body += `<div class="prow" style="padding-bottom:${rowGap}px">
+        <div class="plabel" title="${esc(row.row)}">${esc(row.row)}</div>
+        <div class="track" style="height:${trackH}px">
+          <div class="gridlines">${gridCells("gcell")}</div>
+          ${bars}
+        </div>
+      </div>`;
+    }
+
+    let content;
     if (this._error) {
-      body = `<div class="msg error">Fehler beim Laden von <code>${esc(
+      content = `<div class="msg error">Fehler beim Laden von <code>${esc(
         this.config.entity
       )}</code>: ${esc(this._error)}</div>`;
     } else if (this._loading && (!this._events || !this._events.length)) {
-      body = `<div class="msg">Lade Kalenderdaten …</div>`;
+      content = `<div class="msg">Lade Kalenderdaten …</div>`;
     } else if (!rows.length) {
-      body = `<div class="msg">Keine Termine im Zeitraum ${esc(rangeLabel)} gefunden.</div>`;
+      content = `<div class="msg">Keine Termine im Zeitraum ${esc(rangeLabel)} gefunden.</div>`;
     } else {
-      const groupsWithRows = groupOrder.filter((g) => rows.some((r) => r.group === g));
-      const multiGroup = groupsWithRows.length > 1;
-
-      const headerCells = monthInfos
-        .map((mi) => {
-          const isNow = `${mi.date.getFullYear()}-${mi.date.getMonth()}` === built.currentMonthKey;
-          const yearTag = mi.isJanuary ? `<span class="yr">${mi.year}</span>` : "";
-          return `<th class="${isNow ? "now" : ""}">${yearTag}${esc(mi.label)}</th>`;
-        })
-        .join("");
-
-      let tableRows = "";
-      for (const group of groupsWithRows) {
-        const gRows = rows.filter((r) => r.group === group);
-        if (multiGroup) {
-          tableRows += `<tr class="grouprow"><td colspan="${months + 1}">
-            <span class="swatch" style="background:${esc(colorFor(group, groupsWithRows.indexOf(group)))}"></span>
-            ${esc(group)} <span class="count">${gRows.length}</span></td></tr>`;
-        }
-        for (const r of gRows) {
-          const cells = r.active
-            .map((on) => `<td class="${on ? "on" : ""}">${on ? '<div class="bar"></div>' : ""}</td>`)
-            .join("");
-          const tip = r.description ? ` title="${esc(r.description)}"` : "";
-          tableRows += `<tr style="--gg-bar:${esc(r.color)}"><td class="label"${tip}>${esc(r.label)}</td>${cells}</tr>`;
-        }
-      }
-
-      body = `<div class="wrap"><table>
-        <thead><tr><th class="label head">Aufgabe</th>${headerCells}</tr></thead>
-        <tbody>${tableRows}</tbody>
-      </table></div>`;
+      content = `<div class="grid-table">${header}${body}</div>`;
     }
 
     const legend =
-      this.config.show_legend !== false && groupOrder.length > 1
-        ? `<div class="legend">${groupOrder
-            .map(
-              (g, i) =>
-                `<span class="item"><span class="swatch" style="background:${esc(
-                  colorFor(g, i)
-                )}"></span>${esc(g)}</span>`
-            )
+      this.config.show_legend !== false && typesUsed.length
+        ? `<div class="legend">${typesUsed
+            .map((t) => `<span class="item"><span class="swatch" style="background:${esc(t.color)}"></span>${esc(t.label)}</span>`)
             .join("")}</div>`
         : "";
 
@@ -349,38 +384,37 @@ class GardenGanttCard extends HTMLElement {
         .head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
         .title { font-size: var(--ha-card-header-font-size, 18px); font-weight: 500; color: var(--primary-text-color); }
         .sub { font-size: 12px; color: var(--secondary-text-color); }
-        .legend { display: flex; flex-wrap: wrap; gap: 10px; margin: 6px 0 8px; font-size: 12px; color: var(--secondary-text-color); }
-        .legend .item, .legend { align-items: center; }
-        .legend .item { display: inline-flex; gap: 5px; }
-        .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: middle; }
-        .wrap { overflow-x: auto; }
-        table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
-        th, td { padding: 0; }
-        thead th { font-weight: 500; font-size: 11px; color: var(--secondary-text-color); padding: 2px 4px; text-align: center; }
-        thead th.label { text-align: left; }
-        th.now { color: var(--error-color, #e53935); font-weight: 700; }
-        th .yr { display: block; font-size: 9px; opacity: .7; font-weight: 400; }
-        td.label { text-align: left; padding: 3px 8px 3px 2px; color: var(--primary-text-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        th.label { width: 26%; }
-        td, thead th:not(.label) { width: ${Math.max(2.5, 74 / months)}%; }
-        tbody td:not(.label) { padding: 2px 0; }
-        tbody td.on:not(.label) { border-bottom-color: transparent; }
-        .bar { height: 14px; border-radius: 3px; background: var(--gg-bar, #4caf50); }
-        tr.grouprow td { padding-top: 10px; padding-bottom: 3px; font-size: 12px; font-weight: 600; color: var(--primary-text-color); border-bottom: 1px solid var(--divider-color); }
-        tr.grouprow .count { color: var(--secondary-text-color); font-weight: 400; margin-left: 4px; }
-        tbody tr:not(.grouprow) td { border-bottom: 1px solid var(--divider-color, rgba(0,0,0,.08)); }
+        .legend { display: flex; flex-wrap: wrap; gap: 10px; margin: 4px 0 8px; font-size: 12px; color: var(--secondary-text-color); }
+        .legend .item { display: inline-flex; align-items: center; gap: 5px; }
+        .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+        .grid-table { overflow-x: auto; min-width: 520px; }
+        .hrow, .prow { display: flex; align-items: flex-start; }
+        .hlabel, .plabel { flex: 0 0 clamp(88px, 20%, 180px); padding-right: 8px; box-sizing: border-box; }
+        .hlabel { font-size: 11px; color: var(--secondary-text-color); text-align: left; }
+        .plabel { font-size: 13px; color: var(--primary-text-color); padding-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .htrack { flex: 1 1 auto; display: grid; grid-template-columns: repeat(${months}, 1fr); }
+        .hcell { font-size: 11px; text-align: center; color: var(--secondary-text-color); padding: 2px 0; border-left: 1px solid transparent; }
+        .hcell.now { color: var(--error-color, #e53935); font-weight: 700; }
+        .hcell .yr { display: block; font-size: 9px; opacity: .7; font-weight: 400; }
+        .track { flex: 1 1 auto; position: relative; }
+        .gridlines { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(${months}, 1fr); }
+        .gcell { border-left: 1px solid var(--divider-color, rgba(0,0,0,.08)); }
+        .gcell.now { background: color-mix(in srgb, var(--error-color, #e53935) 10%, transparent); }
+        .seg { position: absolute; box-sizing: border-box; border-radius: 4px; overflow: hidden; display: flex; align-items: center; cursor: default; }
+        .seg span { color: #fff; font-size: 11px; line-height: 1; padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 1px rgba(0,0,0,.25); }
+        .prow:not(:first-child) .track { border-top: 1px solid transparent; }
         .msg { padding: 12px 4px; color: var(--secondary-text-color); font-size: 13px; }
         .msg.error { color: var(--error-color, #e53935); }
         code { font-size: 12px; }
-        .foot { margin-top: 6px; font-size: 11px; color: var(--secondary-text-color); text-align: right; }
+        .foot { margin-top: 8px; font-size: 11px; color: var(--secondary-text-color); text-align: right; }
       </style>
       <ha-card>
         <div class="head">
           <div class="title">${esc(title)}</div>
-          <div class="sub">${esc(rangeLabel)}${rows.length ? ` · ${rows.length} Aufgaben` : ""}</div>
+          <div class="sub">${esc(rangeLabel)}${rows.length ? ` · ${rows.length} Zeilen · ${tasks} Tätigkeiten` : ""}</div>
         </div>
         ${legend}
-        ${body}
+        ${content}
         <div class="foot">Garden Gantt Card v${VERSION}</div>
       </ha-card>
     `;
@@ -393,7 +427,7 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: "garden-gantt-card",
   name: "Garden Gantt Card",
-  description: "Jahres-/Monats-Gantt für eine Home-Assistant-Kalender-Entität",
+  description: "Jahres-/Monats-Gantt: eine Zeile je Pflanze, farbige Tätigkeitsbalken",
   preview: false,
 });
 
