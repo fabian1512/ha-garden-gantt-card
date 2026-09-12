@@ -1,0 +1,7 @@
+{
+  "name": "Garden Gantt Card",
+  "content_in_root": false,
+  "render_readme": true,
+  "filename": "garden-gantt-card.js",
+  "homeassistant": "2024.1.0"
+}

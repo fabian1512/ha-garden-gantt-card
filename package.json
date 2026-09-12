@@ -1,0 +1,19 @@
+{
+  "name": "ha-garden-gantt-card",
+  "version": "0.1.0",
+  "description": "A year/month Gantt-style Lovelace card for Home Assistant calendar entities.",
+  "main": "dist/garden-gantt-card.js",
+  "type": "module",
+  "keywords": [
+    "home-assistant",
+    "lovelace",
+    "hacs",
+    "calendar",
+    "gantt",
+    "garden"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "lint": "node --check dist/garden-gantt-card.js"
+  }
+}
