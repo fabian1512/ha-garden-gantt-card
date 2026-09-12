@@ -13,7 +13,7 @@
  * https://github.com/fabian1512/ha-garden-gantt-card
  */
 
-const VERSION = "0.2.0";
+const VERSION = "0.2.1";
 
 const MONTHS_DE = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
 const MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -392,11 +392,11 @@ class GardenGanttCard extends HTMLElement {
         .hlabel, .plabel { flex: 0 0 clamp(88px, 20%, 180px); padding-right: 8px; box-sizing: border-box; }
         .hlabel { font-size: 11px; color: var(--secondary-text-color); text-align: left; }
         .plabel { font-size: 13px; color: var(--primary-text-color); padding-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .htrack { flex: 1 1 auto; display: grid; grid-template-columns: repeat(${months}, 1fr); }
+        .htrack { flex: 1 1 auto; display: grid; grid-template-columns: repeat(${months}, 1fr); min-width: ${months * 72}px; }
         .hcell { font-size: 11px; text-align: center; color: var(--secondary-text-color); padding: 2px 0; border-left: 1px solid transparent; }
         .hcell.now { color: var(--error-color, #e53935); font-weight: 700; }
         .hcell .yr { display: block; font-size: 9px; opacity: .7; font-weight: 400; }
-        .track { flex: 1 1 auto; position: relative; }
+        .track { flex: 1 1 auto; position: relative; min-width: ${months * 72}px; }
         .gridlines { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(${months}, 1fr); }
         .gcell { border-left: 1px solid var(--divider-color, rgba(0,0,0,.08)); }
         .gcell.now { background: color-mix(in srgb, var(--error-color, #e53935) 10%, transparent); }
