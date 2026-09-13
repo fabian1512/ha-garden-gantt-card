@@ -13,7 +13,7 @@
  * https://github.com/fabian1512/ha-garden-gantt-card
  */
 
-const VERSION = "0.2.2";
+const VERSION = "0.3.0";
 
 const MONTHS_DE = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
 const MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -89,6 +89,8 @@ class GardenGanttCard extends HTMLElement {
         bar_height: 22,
         lane_gap: 3,
         row_gap: 10,
+        visible_months: null,
+        label_min_months: 0.85,
         show_labels: true,
         show_legend: true,
         activity_colors: {},
@@ -293,7 +295,8 @@ class GardenGanttCard extends HTMLElement {
         seg.left = ((Math.max(seg.start, winStart) - winStart) / total) * 100;
         seg.width = ((Math.min(seg.end, winEnd) - Math.max(seg.start, winStart)) / total) * 100;
         const spanMonths = (seg.width / 100) * months;
-        seg.showLabel = this.config.show_labels !== false && spanMonths >= 0.85;
+        const minMonths = Number(this.config.label_min_months);
+        seg.showLabel = this.config.show_labels !== false && spanMonths >= (Number.isFinite(minMonths) ? minMonths : 0.85);
         if (!typesUsed.has(seg.type)) typesUsed.set(seg.type, { label: seg.typeLabel, color: seg.color });
       }
     }
@@ -320,6 +323,12 @@ class GardenGanttCard extends HTMLElement {
 
     const tasks = rows.reduce((n, r) => n + r.segments.length, 0);
     const colWidth = 100 / months;
+
+    const visRaw = Number(this.config.visible_months);
+    const visMonths = Number.isFinite(visRaw) && visRaw >= 1 && visRaw < months ? visRaw : null;
+    const trackMin = visMonths
+      ? `calc((100% - var(--gantt-label-w)) * ${(months / visMonths).toFixed(4)})`
+      : `${months * 72}px`;
 
     const gridCells = (cls) =>
       monthInfos.map((mi) => `<div class="${cls}${mi.isNow ? " now" : ""}"></div>`).join("");
@@ -379,7 +388,7 @@ class GardenGanttCard extends HTMLElement {
 
     this.shadowRoot.innerHTML = `
       <style>
-        :host { display: block; min-width: 0; }
+        :host { display: block; min-width: 0; --gantt-label-w: clamp(88px, 20%, 180px); }
         ha-card { padding: 12px 12px 8px; min-width: 0; }
         .head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
         .title { font-size: var(--ha-card-header-font-size, 18px); font-weight: 500; color: var(--primary-text-color); }
@@ -389,14 +398,14 @@ class GardenGanttCard extends HTMLElement {
         .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
         .grid-table { overflow-x: auto; min-width: 520px; }
         .hrow, .prow { display: flex; align-items: flex-start; }
-        .hlabel, .plabel { flex: 0 0 clamp(88px, 20%, 180px); padding-right: 8px; box-sizing: border-box; }
+        .hlabel, .plabel { flex: 0 0 var(--gantt-label-w); align-self: stretch; padding-right: 8px; box-sizing: border-box; position: sticky; left: 0; z-index: 3; background: var(--ha-card-background, var(--card-background-color, #fff)); }
         .hlabel { font-size: 11px; color: var(--secondary-text-color); text-align: left; }
         .plabel { font-size: 13px; color: var(--primary-text-color); padding-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .htrack { flex: 1 1 auto; display: grid; grid-template-columns: repeat(${months}, 1fr); min-width: ${months * 72}px; }
+        .htrack { flex: 1 1 auto; display: grid; grid-template-columns: repeat(${months}, 1fr); min-width: ${trackMin}; }
         .hcell { font-size: 11px; text-align: center; color: var(--secondary-text-color); padding: 2px 0; border-left: 1px solid transparent; }
         .hcell.now { color: var(--error-color, #e53935); font-weight: 700; }
         .hcell .yr { display: block; font-size: 9px; opacity: .7; font-weight: 400; }
-        .track { flex: 1 1 auto; position: relative; min-width: ${months * 72}px; }
+        .track { flex: 1 1 auto; position: relative; min-width: ${trackMin}; }
         .gridlines { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(${months}, 1fr); }
         .gcell { border-left: 1px solid var(--divider-color, rgba(0,0,0,.08)); }
         .gcell.now { background: color-mix(in srgb, var(--error-color, #e53935) 10%, transparent); }

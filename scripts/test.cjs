@@ -174,5 +174,28 @@ console.log("Garden Gantt Card — model tests\n");
   check("out-of-window events produce no rows", model.rows.length === 0);
 }
 
+// 11) label_min_months relaxes when labels are drawn
+{
+  const short = { summary: "Tomate: Vorkultur", location: "Tomate", start: { date: "2027-05-01" }, end: { date: "2027-05-16" } };
+  const strict = build([short]).model.rows[0].segments[0];
+  const loose = build([short], { label_min_months: 0.3 }).model.rows[0].segments[0];
+  check("half-month bar hidden by default", strict.showLabel === false);
+  check("half-month bar shown with label_min_months 0.3", loose.showLabel === true);
+}
+
+// 12) visible_months scales the track for horizontal scrolling
+{
+  const ev = { summary: "Tomate: Ernte", location: "Tomate", start: { date: "2027-05-01" }, end: { date: "2027-06-01" } };
+  const def = build([ev]);
+  def.card._render();
+  check("default keeps px min-width", def.card.shadowRoot.innerHTML.includes("min-width: 864px"));
+
+  const zoom = build([ev], { visible_months: 6 });
+  zoom.card._render();
+  const html = zoom.card.shadowRoot.innerHTML;
+  check("visible_months 6 of 12 doubles the track", html.includes("calc((100% - var(--gantt-label-w)) * 2.0000)"));
+  check("plant labels stay sticky while scrolling", html.includes("position: sticky"));
+}
+
 console.log(failures === 0 ? "\nAll tests passed." : `\n${failures} test(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
